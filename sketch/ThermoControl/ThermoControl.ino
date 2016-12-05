@@ -1,24 +1,28 @@
-// Include the libraries we need
+// for DS18B20
 #include <OneWire.h>
 #include <DallasTemperature.h>
+// for permanent parameters storage
 #include <EEPROM.h>
 
-// Data wire is plugged into port 2 on the Arduino
-#define ONE_WIRE_BUS 2
-
-#define HEATER_RELAY_OUT 3
+// specify pin with temperature sensor bus
+#define TEMP_SENSOR_BUS_PIN 2
+// specify pin with heater relay control
+#define HEATER_RELAY_OUT_PIN 3
+// heater status constants
 #define HEATER_ON LOW
 #define HEATER_OFF HIGH
 #define HEATER_UNKNOWN -1
 
-// Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
-OneWire oneWire(ONE_WIRE_BUS);
+#define HEATER_CONTROL_INTERVAL 1000
 
-// Pass our oneWire reference to Dallas Temperature. 
+// Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
+OneWire oneWire(TEMP_SENSOR_BUS_PIN);
+
+// Pass our oneWire reference to Dallas Temperature.
 DallasTemperature sensors(&oneWire);
 
 // arrays to hold device address
-DeviceAddress insideThermometer;
+DeviceAddress waterThermometer;
 
 int highTemperature = 30;
 int lowTemperature = 25;
@@ -33,10 +37,9 @@ float currentTemperature = 0;
  */
 void setup(void)
 {
-  pinMode(HEATER_RELAY_OUT, OUTPUT);
+  pinMode(HEATER_RELAY_OUT_PIN, OUTPUT);
   // start serial port
   Serial.begin(9600);
-  Serial.println("Dallas Temperature IC Control Library Demo");
 
   // locate devices on the bus
   Serial.print("Locating devices...");
@@ -46,44 +49,36 @@ void setup(void)
   Serial.println(" devices.");
 
   // report parasite power requirements
-  Serial.print("Parasite power is: "); 
+  Serial.print("Parasite power is: ");
   if (sensors.isParasitePowerMode()) Serial.println("ON");
     else Serial.println("OFF");
 
-  // Method 1:
-  // Search for devices on the bus and assign based on an index. Ideally,
-  // you would do this to initially discover addresses on the bus and then 
-  // use those addresses and manually assign them (see above) once you know 
-  // the devices on your bus (and assuming they don't change).
-  if (!sensors.getAddress(insideThermometer, 0)) 
-      Serial.println("Unable to find address for Device 0"); 
-  
+  if (!sensors.getAddress(waterThermometer, 0))
+      Serial.println("Unable to find address for Device 0");
+
   // method 2: search()
   // search() looks for the next device. Returns 1 if a new address has been
-  // returned. A zero might mean that the bus is shorted, there are no devices, 
-  // or you have already retrieved all of them. It might be a good idea to 
-  // check the CRC to make sure you didn't get garbage. The order is 
+  // returned. A zero might mean that the bus is shorted, there are no devices,
+  // or you have already retrieved all of them. It might be a good idea to
+  // check the CRC to make sure you didn't get garbage. The order is
   // deterministic. You will always get the same devices in the same order
   //
   // Must be called before search()
   //oneWire.reset_search();
-  // assigns the first address found to insideThermometer
-  //if (!oneWire.search(insideThermometer)) Serial.println("Unable to find address for insideThermometer");
+  // assigns the first address found to waterThermometer
+  //if (!oneWire.search(waterThermometer)) Serial.println("Unable to find address for waterThermometer");
 
   // show the addresses we found on the bus
   Serial.print("Device 0 Address: ");
-  printAddress(insideThermometer);
+  printAddress(waterThermometer);
   Serial.println();
 
   // set the resolution to 9 bit (Each Dallas/Maxim device is capable of several different resolutions)
-  sensors.setResolution(insideThermometer, 12);
- 
+  sensors.setResolution(waterThermometer, 12);
+
   Serial.print("Device 0 Resolution: ");
-  Serial.print(sensors.getResolution(insideThermometer), DEC); 
+  Serial.print(sensors.getResolution(waterThermometer), DEC);
   Serial.println();
-
-
-   //saveTemperature(30,40);
 
    loadTemperature();
 
@@ -95,7 +90,6 @@ void setup(void)
 
    updateState(HEATER_OFF);
 
-
    inputString.reserve(200);
 }
 
@@ -103,21 +97,21 @@ void setup(void)
  * Main function. It will request the tempC from the sensors and display on Serial.
  */
 void loop(void)
-{ 
-  // call sensors.requestTemperatures() to issue a global temperature 
+{
+  // call sensors.requestTemperatures() to issue a global temperature
   // request to all devices on the bus
   sensors.requestTemperatures(); // Send the command to get temperatures
-  
+
   // It responds almost immediately. Let's print out the data
-  float tempC = sensors.getTempC(insideThermometer);
+  float tempC = sensors.getTempC(waterThermometer);
   Serial.print("Temp C: ");
   Serial.print(tempC);
   Serial.println();
 
   currentTemperature = tempC;
   control(tempC);
-  
-  delay(1000);
+
+  delay(HEATER_CONTROL_INTERVAL);
 }
 
 // function to print a device address
@@ -137,14 +131,16 @@ void serialEvent() {
     char inChar = (char)Serial.read();
     // add it to the inputString:
     inputString += inChar;
-   
+
     // if the incoming character is a newline, set a flag
     // so the main loop can do something about it:
     if (inChar == '\n') {
       stringComplete = true;
 
-      handleString(inputString);      
+      handleString(inputString);
       inputString.remove(0);
+
+      stringComplete = false;
     }
   }
 }
@@ -162,7 +158,7 @@ void saveTemperature(int low, int high)
 {
   lowTemperature = low;
   highTemperature = high;
-  
+
   EEPROM.put(eepromAddr, low);
   EEPROM.put(eepromAddr+sizeof(int), high);
 }
@@ -188,8 +184,8 @@ void control(float currentTemperature)
 void updateState(int newState)
 {
   if (currentHeaterState != newState)
-  {    
-     digitalWrite(HEATER_RELAY_OUT, newState);
+  {
+     digitalWrite(HEATER_RELAY_OUT_PIN, newState);
      currentHeaterState = newState;
   }
 }
@@ -197,12 +193,12 @@ void updateState(int newState)
 void handleString(String str)
 {
   str.trim();
-  
+
   Serial.print("COMMAND: ");
   Serial.print(str);
   Serial.println();
-  
-  
+
+
   if (str.startsWith("SETLOW ")){
       String tempStr = str.substring(7);
       int temp = tempStr.toInt();
@@ -235,4 +231,3 @@ void handleString(String str)
     Serial.println();
   }
 }
-
