@@ -1,0 +1,5 @@
+
+Number Temperature "Water temp [%d]" (ALL) {modbus="Heater:1", autoupdate="true"}
+Number LowTemperature "Low temp [%d]" (ALL) {modbus="Heater:3", autoupdate="true"}
+Number HighTemperature "High temp [%d]" (ALL) {modbus="Heater:4", autoupdate="true"}
+Switch Heater {modbus="Heater:5", autoupdate="true"}

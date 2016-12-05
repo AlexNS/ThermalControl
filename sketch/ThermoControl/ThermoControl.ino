@@ -1,3 +1,6 @@
+#include <ModbusRtu.h>
+#include <Timer.h>
+
 // for DS18B20
 #include <OneWire.h>
 #include <DallasTemperature.h>
@@ -24,6 +27,12 @@ DallasTemperature sensors(&oneWire);
 // arrays to hold device address
 DeviceAddress waterThermometer;
 
+// timer for control operation and temperature update
+Timer t;
+
+// Modbus slave object
+Modbus slave(5, 0, 10);
+
 int highTemperature = 30;
 int lowTemperature = 25;
 int eepromAddr = 0;
@@ -31,6 +40,10 @@ int currentHeaterState = HEATER_UNKNOWN;
 String inputString = "";         // a string to hold incoming data
 boolean stringComplete = false;  // whether the string is complete
 float currentTemperature = 0;
+
+uint16_t modbusRegisters[16] = {
+  0, 0, 0, 0, 0, 0, 28182, 8, 0, 0, 0, 0, 0, 0, 1, -1 };
+
 
 /*
  * Setup function. Here we do the basics
@@ -40,6 +53,7 @@ void setup(void)
   pinMode(HEATER_RELAY_OUT_PIN, OUTPUT);
   // start serial port
   Serial.begin(9600);
+  slave.begin(9600,SERIAL_8E1);
 
   // locate devices on the bus
   Serial.print("Locating devices...");
@@ -90,7 +104,7 @@ void setup(void)
 
    updateState(HEATER_OFF);
 
-   inputString.reserve(200);
+   t.every(2000, &updateTemp);
 }
 
 /*
@@ -98,20 +112,24 @@ void setup(void)
  */
 void loop(void)
 {
-  // call sensors.requestTemperatures() to issue a global temperature
-  // request to all devices on the bus
-  sensors.requestTemperatures(); // Send the command to get temperatures
+  slave.poll( modbusRegisters, 16 );
+  modbusCheckUpdates();
+  t.update();
+}
 
-  // It responds almost immediately. Let's print out the data
+void updateTemp()
+{
+  sensors.requestTemperatures(); // Send the command to get temperatures
+  
   float tempC = sensors.getTempC(waterThermometer);
-  Serial.print("Temp C: ");
-  Serial.print(tempC);
-  Serial.println();
+  //Serial.print("Temp C: ");
+  //Serial.print(tempC);
+  //Serial.println();
 
   currentTemperature = tempC;
+  modbusSetCurrentTemperature();
   control(tempC);
-
-  delay(HEATER_CONTROL_INTERVAL);
+  
 }
 
 // function to print a device address
@@ -124,33 +142,14 @@ void printAddress(DeviceAddress deviceAddress)
   }
 }
 
-
-void serialEvent() {
-  while (Serial.available()) {
-    // get the new byte:
-    char inChar = (char)Serial.read();
-    // add it to the inputString:
-    inputString += inChar;
-
-    // if the incoming character is a newline, set a flag
-    // so the main loop can do something about it:
-    if (inChar == '\n') {
-      stringComplete = true;
-
-      handleString(inputString);
-      inputString.remove(0);
-
-      stringComplete = false;
-    }
-  }
-}
-
 void loadTemperature()
 {
   if (EEPROM.length()>=sizeof(int)*2)
   {
     EEPROM.get(eepromAddr, lowTemperature);
     EEPROM.get(eepromAddr+sizeof(int), highTemperature);
+
+    modbusSetLowHigh();
   }
 }
 
@@ -161,6 +160,8 @@ void saveTemperature(int low, int high)
 
   EEPROM.put(eepromAddr, low);
   EEPROM.put(eepromAddr+sizeof(int), high);
+
+  modbusSetLowHigh();
 }
 
 
@@ -187,47 +188,37 @@ void updateState(int newState)
   {
      digitalWrite(HEATER_RELAY_OUT_PIN, newState);
      currentHeaterState = newState;
+     modbusSetHeaterState();
   }
 }
 
-void handleString(String str)
+void modbusSetLowHigh()
 {
-  str.trim();
+  modbusRegisters[3] = lowTemperature;
+  modbusRegisters[4] = highTemperature;
+}
 
-  Serial.print("COMMAND: ");
-  Serial.print(str);
-  Serial.println();
+void modbusSetHeaterState()
+{
+  modbusRegisters[5] = 1-currentHeaterState;
+}
 
+void modbusSetCurrentTemperature()
+{
+  uint16_t intTempC = (uint16_t)currentTemperature;
+  uint16_t decTempC = (uint16_t)((currentTemperature-intTempC)*100);
+  modbusRegisters[1] = intTempC;
+  modbusRegisters[2] = decTempC;  
+}
 
-  if (str.startsWith("SETLOW ")){
-      String tempStr = str.substring(7);
-      int temp = tempStr.toInt();
-      saveTemperature(temp,highTemperature);
-      Serial.print("Saved low: ");
-      Serial.print(tempStr);
-      Serial.println();
-  } else
-   if (str.startsWith("SETHIGH ")){
-      String tempStr = str.substring(7);
-      int temp = tempStr.toInt();
-      saveTemperature(lowTemperature,temp);
-      Serial.print("Saved low: ");
-      Serial.print(tempStr);
-      Serial.println();
-   }    else
-   if (str.startsWith("STATUS")){
-      Serial.print("LOW: ");
-      Serial.print(lowTemperature);
-      Serial.print(" HIGH: ");
-      Serial.print(highTemperature);
-      Serial.print(" CURRENT: ");
-      Serial.print(currentTemperature);
-      Serial.print(" HEATER: ");
-      Serial.print(currentHeaterState);
-      Serial.println();
-  } else{
-    Serial.print("Unknown command: ");
-    Serial.print(str);
-    Serial.println();
+void modbusCheckUpdates()
+{
+  uint16_t newLow = modbusRegisters[3];
+  uint16_t newHigh = modbusRegisters[4];
+
+  if (lowTemperature!=newLow || highTemperature!=newHigh)
+  {
+    saveTemperature(newLow, newHigh);  
   }
 }
+

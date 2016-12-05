@@ -1,0 +1,8 @@
+sitemap demo label="Main Menu" {
+    Frame label="Heater" {
+        Text item=Temperature valuecolor=[>25="orange",>15="green",<=15="blue"] icon="temperature"
+        Setpoint item=LowTemperature icon="temperature" minValue="20" maxValue="70" step="1"
+        Setpoint item=HighTemperature icon="temperature" minValue="20" maxValue="70" step="1"
+        Switch item=Heater icon="heater" 
+    }
+}
